@@ -6,24 +6,26 @@ A Node.js and Express-based API for managing bookstore inventory synchronization
 
 - **CSV Inventory Upload**: Upload and process CSV files to synchronize bookstore inventory
 - **PDF Report Generation**: Generate detailed PDF reports with top 5 priciest books and top 5 prolific authors
-- **Database Management**: MongoDB database with Mongoose ODM
+- **Database Management**: SQL Server database with Sequelize ORM
 - **Docker Support**: Fully containerized with Docker and Docker Compose
+- **ES6 Modules**: Modern JavaScript with ES6 import/export syntax
 
 ## Tech Stack
 
 - **Runtime**: Node.js 18+
 - **Framework**: Express.js
 - **Module System**: ES6 Modules (import/export)
-- **Database**: MongoDB
-- **ODM**: Mongoose
+- **Database**: SQL Server
+- **ORM**: Sequelize
 - **File Processing**: Multer (file upload), csv-parse (CSV parsing)
 - **PDF Generation**: PDFKit
+- **Validation**: express-validator
 
 ## Prerequisites
 
 - Node.js 18 or higher
-- Docker and Docker Compose (for containerized setup)
-- MongoDB (if running without Docker)
+- SQL Server (or Docker for containerized setup)
+- Docker and Docker Compose (optional, for containerized setup)
 
 ## Quick Start with Docker Compose (Recommended)
 
@@ -39,7 +41,7 @@ A Node.js and Express-based API for managing bookstore inventory synchronization
    ```
 
    This will start:
-   - MongoDB database on port 27017
+   - SQL Server 2022 Express on port 1433
    - API server on port 3000
 
 3. **Check if services are running**:
@@ -65,41 +67,28 @@ A Node.js and Express-based API for managing bookstore inventory synchronization
    ```
    
    This will install all required packages:
-   - express, sequelize, pg, pg-hstore
+   - express, sequelize, tedious (SQL Server driver)
    - multer, csv-parse, pdfkit
    - dotenv, express-validator, cors
    - nodemon (dev dependency)
 
-2. **Set up environment variables**:
+2. **Set up SQL Server**:
+   - Install SQL Server Express: https://www.microsoft.com/sql-server/sql-server-downloads
+   - Create a database named `bookstore_db`
+   - Note your SQL Server credentials (username and password)
+
+3. **Set up environment variables**:
    Create a `.env` file in the root directory:
    ```env
-   MONGODB_URI=mongodb://localhost:27017/bookstore_db
    DB_HOST=localhost
-   DB_PORT=27017
+   DB_PORT=1433
    DB_NAME=bookstore_db
-   DB_USER=
-   DB_PASSWORD=
-   DB_AUTH_SOURCE=admin
+   DB_USER=sa
+   DB_PASSWORD=YourPassword
+   DB_ENCRYPT=false
+   DB_TRUST_CERT=true
    PORT=3000
    NODE_ENV=development
-   ```
-   
-   **Note**: If MongoDB has authentication enabled, add username and password:
-   ```env
-   MONGODB_URI=mongodb://username:password@localhost:27017/bookstore_db?authSource=admin
-   DB_USER=username
-   DB_PASSWORD=password
-   ```
-
-3. **Set up MongoDB database**:
-   MongoDB will create the database automatically when you first connect.
-   No manual database creation needed!
-   
-   If you want to verify MongoDB is running:
-   ```bash
-   mongosh
-   # or
-   mongo
    ```
 
 4. **Start the server**:
@@ -148,6 +137,12 @@ Bookstore A,123 Main St,The Great Gatsby,180,F. Scott Fitzgerald,12.99
 Bookstore B,456 Oak Ave,1984,328,George Orwell,14.50
 ```
 
+**Processing Logic**:
+- Matches existing stores, books, and authors by name/address
+- Creates new entities if they don't exist
+- If a store already stocks a book, increments the `copies` count
+- Updates the price to the latest value
+
 **Response**:
 ```json
 {
@@ -168,14 +163,35 @@ Bookstore B,456 Oak Ave,1984,328,George Orwell,14.50
 }
 ```
 
-### 3. Download Store Report
+### 3. Get All Stores
+
+**GET** `/api/store`
+
+Get a list of all stores in the database.
+
+**Response**:
+```json
+{
+  "message": "Stores retrieved successfully",
+  "count": 3,
+  "stores": [
+    {
+      "id": 1,
+      "name": "Central Library",
+      "address": "123 Main Street"
+    }
+  ]
+}
+```
+
+### 4. Download Store Report
 
 **GET** `/api/store/:id/download-report`
 
 Generate and download a PDF report for a specific store.
 
 **Parameters**:
-- `id` (path parameter): Store ID
+- `id` (path parameter): Store ID (integer)
 
 **Response**:
 - Content-Type: `application/pdf`
@@ -189,25 +205,26 @@ Generate and download a PDF report for a specific store.
 **Error Response**:
 ```json
 {
-  "error": "Store not found"
+  "error": "Store not found",
+  "message": "No store found with ID: 1"
 }
 ```
 
 ## Database Schema
 
-### Collections (MongoDB)
+### Tables (SQL Server)
 
-- **stores**: `_id`, `name`, `address`, `createdAt`, `updatedAt`
-- **authors**: `_id`, `name`, `createdAt`, `updatedAt`
-- **books**: `_id`, `name`, `pages`, `author_id` (ObjectId reference), `createdAt`, `updatedAt`
-- **storebooks**: `_id`, `store_id` (ObjectId reference), `book_id` (ObjectId reference), `price`, `copies`, `sold_out`, `createdAt`, `updatedAt`
+- **stores**: `id` (PK, auto-increment), `name`, `address`, `createdAt`, `updatedAt`
+- **authors**: `id` (PK, auto-increment), `name` (unique), `createdAt`, `updatedAt`
+- **books**: `id` (PK, auto-increment), `name`, `pages`, `author_id` (FK), `createdAt`, `updatedAt`
+- **store_books**: `id` (PK, auto-increment), `store_id` (FK), `book_id` (FK), `price`, `copies`, `sold_out`, `createdAt`, `updatedAt`
 
 ### Relationships
 
-- Book references Author via `author_id` (ObjectId)
-- Store and Book have many-to-many relationship through StoreBook collection
-- StoreBook tracks price, copies, and sold_out status
-- MongoDB uses ObjectId for all `_id` fields (automatically generated)
+- Book references Author via `author_id` (foreign key)
+- Store and Book have many-to-many relationship through `store_books` table
+- `store_books` tracks price, copies, and sold_out status
+- Unique constraint on `(store_id, book_id)` to prevent duplicates
 
 ## CSV Processing Logic
 
@@ -216,19 +233,7 @@ Generate and download a PDF report for a specific store.
 3. **Book Matching**: Matches by `name`, `author_id`, and `pages`
 4. **StoreBook Logic**:
    - If store already stocks the book: increments `copies` and updates `price`
-   - If new: creates record with `copies = 1`
-
-## Sample CSV File
-
-A sample CSV file (`sample-inventory.csv`) is included in the repository for testing:
-
-```csv
-store_name,store_address,book_name,pages,author_name,price
-Central Library,123 Main Street,The Great Gatsby,180,F. Scott Fitzgerald,12.99
-Central Library,123 Main Street,To Kill a Mockingbird,281,Harper Lee,13.50
-Downtown Books,456 Oak Avenue,1984,328,George Orwell,14.50
-Downtown Books,456 Oak Avenue,Animal Farm,112,George Orwell,10.99
-```
+   - If new: creates record with `copies = 1` and `sold_out = false`
 
 ## Testing the API
 
@@ -252,7 +257,7 @@ Downtown Books,456 Oak Avenue,Animal Farm,112,George Orwell,10.99
 - **Body**: 
   - Select `form-data`
   - Key: `csv` (change type to **File** from the dropdown)
-  - Value: Click "Select Files" and choose `sample-inventory.csv` from the project root
+  - Value: Click "Select Files" and choose your CSV file
 - **Expected Response**:
   ```json
   {
@@ -266,19 +271,33 @@ Downtown Books,456 Oak Avenue,Animal Farm,112,George Orwell,10.99
   }
   ```
 
-#### 3. Download Store Report
+#### 3. Get All Stores
 - **Method**: GET
-- **URL**: `http://localhost:3000/api/store/{storeId}/download-report`
-  - Replace `{storeId}` with the actual MongoDB ObjectId of the store (e.g., `507f1f77bcf86cd799439011`)
+- **URL**: `http://localhost:3000/api/store`
+- **Expected Response**: List of all stores with their IDs
+
+#### 4. Download Store Report
+- **Method**: GET
+- **URL**: `http://localhost:3000/api/store/1/download-report`
+  - Replace `1` with the actual store ID from the previous endpoint
 - **Expected Response**: PDF file download
-- **Note**: After uploading the CSV, check the response to see which stores were created. Store IDs are MongoDB ObjectIds (24-character hex strings)
 
 ### Using cURL
+
+**Health Check**:
+```bash
+curl http://localhost:3000/health
+```
 
 **Upload CSV**:
 ```bash
 curl -X POST http://localhost:3000/api/inventory/upload \
   -F "csv=@sample-inventory.csv"
+```
+
+**Get All Stores**:
+```bash
+curl http://localhost:3000/api/store
 ```
 
 **Download Report**:
@@ -291,8 +310,8 @@ curl -X GET http://localhost:3000/api/store/1/download-report \
 
 1. **Start the server**: `npm start` or `npm run dev`
 2. **Test health endpoint**: GET `http://localhost:3000/health`
-3. **Upload sample CSV**: POST `http://localhost:3000/api/inventory/upload` with `sample-inventory.csv`
-4. **Get store ID**: Check the response or database (stores will be created with IDs starting from 1)
+3. **Upload CSV**: POST `http://localhost:3000/api/inventory/upload` with a CSV file
+4. **Get store ID**: GET `http://localhost:3000/api/store` to see all stores
 5. **Download report**: GET `http://localhost:3000/api/store/1/download-report`
 
 ## Error Handling
@@ -305,6 +324,7 @@ The API includes comprehensive error handling for:
 - Missing required fields
 - Invalid data types
 - Store not found errors
+- Sequelize validation and constraint errors
 
 ## Project Structure
 
@@ -312,13 +332,13 @@ The API includes comprehensive error handling for:
 .
 ├── src/
 │   ├── config/
-│   │   └── database.js          # Database configuration
+│   │   └── database.js          # SQL Server configuration with Sequelize
 │   ├── controllers/
-│   │   ├── inventoryController.js  # CSV upload logic
+│   │   ├── inventoryController.js  # CSV upload and processing logic
 │   │   └── storeController.js      # PDF report generation
 │   ├── middleware/
 │   │   ├── errorHandler.js      # Global error handler
-│   │   └── upload.js            # Multer configuration
+│   │   └── upload.js            # Multer configuration for file uploads
 │   ├── models/
 │   │   ├── Author.js            # Author model
 │   │   ├── Book.js              # Book model
@@ -332,8 +352,9 @@ The API includes comprehensive error handling for:
 ├── uploads/                      # Temporary CSV upload directory
 ├── .dockerignore
 ├── .gitignore
-├── docker-compose.yml
-├── Dockerfile
+├── docker-compose.yml            # Docker Compose configuration
+├── Dockerfile                    # Docker image configuration
+├── nodemon.json                  # Nodemon configuration
 ├── package.json
 └── README.md
 ```
@@ -352,13 +373,28 @@ This uses `nodemon` for automatic server restarts on file changes.
 
 The application uses Sequelize's `sync` method with `alter: true` for development. For production, consider using proper migrations.
 
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_HOST` | SQL Server host | `localhost` |
+| `DB_PORT` | SQL Server port | `1433` |
+| `DB_NAME` | Database name | `bookstore_db` |
+| `DB_USER` | Database username | `sa` |
+| `DB_PASSWORD` | Database password | (required) |
+| `DB_ENCRYPT` | Use encryption | `false` |
+| `DB_TRUST_CERT` | Trust server certificate | `true` |
+| `PORT` | Server port | `3000` |
+| `NODE_ENV` | Environment | `development` |
+
 ## Troubleshooting
 
 ### Database Connection Issues
 
-- Ensure PostgreSQL is running
+- Ensure SQL Server is running
 - Check database credentials in `.env`
-- Verify database exists: `createdb bookstore_db`
+- Verify database exists: `CREATE DATABASE bookstore_db;`
+- For Docker: Check if container is running with `docker-compose ps`
 
 ### Port Already in Use
 
@@ -370,6 +406,13 @@ The application uses Sequelize's `sync` method with `alter: true` for developmen
 - Verify CSV format matches the required structure
 - Check file size (max 10MB)
 - Ensure all required fields are present
+- Make sure the form-data field name is exactly `csv` (lowercase)
+
+### SQL Server Authentication
+
+- Ensure SQL Server Authentication is enabled (not just Windows Authentication)
+- Check that the `sa` account is enabled
+- Verify password is correct in `.env`
 
 ## License
 
@@ -378,4 +421,3 @@ ISC
 ## Author
 
 Digital Bookstore API Challenge
-
