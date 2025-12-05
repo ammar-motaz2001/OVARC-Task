@@ -16,7 +16,9 @@ services:
       test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P YourStrong@Passw0rd -Q "SELECT 1" || exit 1
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
 
   api:
     build: .
@@ -26,7 +28,7 @@ services:
     environment:
       DB_HOST: db
       DB_PORT: 1433
-      DB_NAME: bookstore_db
+      DB_NAME: bookstore_OVARC_db
       DB_USER: sa
       DB_PASSWORD: YourStrong@Passw0rd
       DB_ENCRYPT: "false"
@@ -38,6 +40,7 @@ services:
         condition: service_healthy
     volumes:
       - ./uploads:/app/uploads
+    restart: unless-stopped
 
 volumes:
   mssql_data:
